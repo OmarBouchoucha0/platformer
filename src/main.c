@@ -9,13 +9,32 @@ typedef struct {
 
 typedef struct {
   animation_state torchAnimation;
+  animation_state mcIdleAnimation;
+  animation_state mcWalkAnimation;
 } animations;
 
-void input(Camera2D *camera, float dt) {
-  if (IsKeyDown(KEY_RIGHT))
+typedef enum { LEFT, RIGHT } player_direction;
+typedef enum { IDLE, WALK } player_condition;
+
+typedef struct {
+  Vector2 position;
+  player_direction direction;
+  player_condition condition;
+} player_State;
+
+void input(player_State *player, Camera2D *camera, float dt) {
+  player->condition = WALK;
+  if (IsKeyDown(KEY_RIGHT)) {
     camera->target.x += 5.0f;
-  if (IsKeyDown(KEY_LEFT))
+    player->position.x += 5.0f;
+    player->direction = RIGHT;
+  } else if (IsKeyDown(KEY_LEFT)) {
     camera->target.x -= 5.0f;
+    player->position.x -= 5.0f;
+    player->direction = LEFT;
+  } else {
+    player->condition = IDLE;
+  }
 }
 
 void ai();
@@ -30,7 +49,33 @@ void updateTorchAnimation(float dt, animations *ani) {
   }
 }
 
-void animation(float dt, animations *ani) { updateTorchAnimation(dt, ani); }
+void updateMcIdleAnimation(float dt, animations *ani) {
+  ani->mcIdleAnimation.frameTimer += dt;
+  if (ani->mcIdleAnimation.frameTimer >= ani->mcIdleAnimation.frameDuration) {
+    ani->mcIdleAnimation.frame =
+        (ani->mcIdleAnimation.frame + 1) % ani->mcIdleAnimation.frameCount;
+    ani->mcIdleAnimation.frameTimer -= ani->mcIdleAnimation.frameDuration;
+  }
+}
+
+void updateMcWalkAnimation(float dt, animations *ani) {
+  ani->mcWalkAnimation.frameTimer += dt;
+  if (ani->mcWalkAnimation.frameTimer >= ani->mcWalkAnimation.frameDuration) {
+    ani->mcWalkAnimation.frame =
+        (ani->mcWalkAnimation.frame + 1) % ani->mcWalkAnimation.frameCount;
+    ani->mcWalkAnimation.frameTimer -= ani->mcWalkAnimation.frameDuration;
+  }
+}
+
+void animation(player_State player, float dt, animations *ani) {
+  updateTorchAnimation(dt, ani);
+  switch (player.condition) {
+  case IDLE:
+    updateMcIdleAnimation(dt, ani);
+  case WALK:
+    updateMcWalkAnimation(dt, ani);
+  }
+}
 
 void drawTorch(Texture2D torchTexture, float x, float y, float globalScale,
                animations *ani) {
@@ -46,11 +91,49 @@ void drawTorch(Texture2D torchTexture, float x, float y, float globalScale,
   DrawTexturePro(torchTexture, frameRec, destRec, (Vector2){0, 0}, 0.0f, WHITE);
 }
 
-void render(int screenHeight, int screenWidth, Camera2D camera,
-            Texture2D backTexture, Texture2D farTexture,
+void drawMc(Texture2D mcIdleTexture, Texture2D mcWalkTexture,
+            player_State player, float globalScale, animations *ani) {
+  if (player.condition == IDLE) {
+    float frameWidth =
+        (float)mcIdleTexture.width / ani->mcIdleAnimation.frameCount;
+    float frameHeight = (float)mcIdleTexture.height;
+
+    Rectangle frameRec = {(float)ani->mcIdleAnimation.frame * frameWidth, 0.0f,
+                          frameWidth, frameHeight};
+
+    Rectangle destRec = {player.position.x, player.position.y,
+                         frameWidth * globalScale, frameHeight * globalScale};
+    if (player.direction == LEFT) {
+      frameRec.width = -frameRec.width;
+    }
+    DrawTexturePro(mcIdleTexture, frameRec, destRec, (Vector2){0, 0}, 0.0f,
+                   WHITE);
+  }
+
+  if (player.condition == WALK) {
+    float frameWidth =
+        (float)mcWalkTexture.width / ani->mcWalkAnimation.frameCount;
+    float frameHeight = (float)mcWalkTexture.height;
+
+    Rectangle frameRec = {(float)ani->mcWalkAnimation.frame * frameWidth, 0.0f,
+                          frameWidth, frameHeight};
+
+    Rectangle destRec = {player.position.x, player.position.y,
+                         frameWidth * globalScale, frameHeight * globalScale};
+    if (player.direction == LEFT) {
+      frameRec.width = -frameRec.width;
+    }
+    DrawTexturePro(mcWalkTexture, frameRec, destRec, (Vector2){0, 0}, 0.0f,
+                   WHITE);
+  }
+}
+
+void render(player_State player, int screenHeight, int screenWidth,
+            Camera2D camera, Texture2D backTexture, Texture2D farTexture,
             Texture2D middleTexture, Texture2D nearTexture,
             Texture2D torchTexture, Texture2D tilesetTexture,
-            Texture2D foregroundTexture, float globalScale, float dt,
+            Texture2D foregroundTexture, Texture2D mcIdleTexture,
+            Texture2D mcWalkTexture, float globalScale, float dt,
             animations *ani) {
   ClearBackground(WHITE);
   BeginMode2D(camera);
@@ -94,6 +177,7 @@ void render(int screenHeight, int screenWidth, Camera2D camera,
     DrawTextureEx(tilesetTexture, (Vector2){xPos, tilesetY}, 0.0f, globalScale,
                   WHITE);
   }
+  drawMc(mcIdleTexture, mcWalkTexture, player, globalScale, ani);
 
   for (int i = 0; i < 100; i++) {
     float yPos = screenHeight - (foregroundTexture.height * globalScale);
@@ -134,9 +218,23 @@ int main(void) {
 
   Texture2D foregroundTexture =
       LoadTexture("assets/background/corridor/layers/foreground.png");
+
+  Texture2D mcIdleTexture =
+      LoadTexture("assets/character/spriteSheet/idle.png");
+  Texture2D mcWalkTexture =
+      LoadTexture("assets/character/spriteSheet/walk.png");
+
   animations ani = {};
   ani.torchAnimation.frameDuration = 0.25f;
   ani.torchAnimation.frameCount = 4;
+  ani.mcIdleAnimation.frameDuration = 0.20f;
+  ani.mcIdleAnimation.frameCount = 6;
+  ani.mcWalkAnimation.frameDuration = 0.10f;
+  ani.mcWalkAnimation.frameCount = 8;
+
+  player_State player = {};
+  player.position.x = 50.0f;
+  player.position.y = 224 + 128 + 42;
 
   SetTargetFPS(60);
 
@@ -152,19 +250,13 @@ int main(void) {
     fps = GetFPS();
     dt = GetFrameTime();
     globalScale = (float)screenHeight / 224.0f;
-    input(&camera, dt);
-    animation(dt, &ani);
-    render(screenHeight, screenWidth, camera, backTexture, farTexture,
+    input(&player, &camera, dt);
+    animation(player, dt, &ani);
+    render(player, screenHeight, screenWidth, camera, backTexture, farTexture,
            middleTexture, nearTexture, torchTexture, tilesetTexture,
-           foregroundTexture, globalScale, dt, &ani);
+           foregroundTexture, mcIdleTexture, mcWalkTexture, globalScale, dt,
+           &ani);
   }
-  UnloadTexture(tilesetTexture);
-  UnloadTexture(farTexture);
-  UnloadTexture(backTexture);
-  UnloadTexture(middleTexture);
-  UnloadTexture(nearTexture);
-  UnloadTexture(foregroundTexture);
-  UnloadTexture(torchTexture);
   CloseWindow();
 
   return 0;
